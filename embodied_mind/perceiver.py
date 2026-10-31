@@ -16,6 +16,20 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+OFFLINE_MODELS = {"rule", "mock", "offline"}
+ANIMALS = {"sheep", "cow", "pig", "chicken", "zombie", "skeleton", "creeper", "spider"}
+
+
+def _gemini_client():
+    """Return a Gemini client, preferring the current google-genai SDK."""
+    try:
+        from google import genai  # google-genai (current SDK)
+        return ("genai", genai.Client(api_key=os.getenv("GOOGLE_API_KEY")))
+    except ImportError:
+        import google.generativeai as legacy  # google-generativeai (older SDK)
+        legacy.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        return ("legacy", legacy)
+
 PERCEPTION_PROMPT = (Path(__file__).parent.parent / "prompts" / "perceiver.txt").resolve()
 
 DEFAULT_PROMPT = """You are a visual perception module for an embodied AI agent in Minecraft.
@@ -47,7 +61,7 @@ Respond ONLY with a JSON object (no markdown, no backticks):
 class VLMPerceiver:
     """Converts raw RGB frames into structured scene descriptions using a VLM."""
 
-    def __init__(self, model: str = "gemini-2.0-flash"):
+    def __init__(self, model: str = "gemini-2.5-flash"):
         self.model = model
         self.prompt = self._load_prompt()
         self._init_client()
@@ -60,11 +74,11 @@ class VLMPerceiver:
 
     def _init_client(self):
         """Initialize the appropriate API client based on model name."""
-        if "gemini" in self.model:
-            import google.generativeai as genai
-            genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-            self.client = genai.GenerativeModel(self.model)
-            self.api = "gemini"
+        if self.model in OFFLINE_MODELS:
+            self.client = None
+            self.api = "rule"
+        elif "gemini" in self.model:
+            self.client, self.api = _gemini_client(), "gemini"
         elif "gpt" in self.model:
             from openai import OpenAI
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -77,16 +91,20 @@ class VLMPerceiver:
         else:
             raise ValueError(f"Unsupported model: {self.model}")
 
-    def perceive(self, rgb_frame: np.ndarray) -> dict:
+    def perceive(self, rgb_frame: np.ndarray, obs: Optional[dict] = None) -> dict:
         """
-        Process a raw RGB frame and return structured scene description.
-        
+        Process a raw RGB frame and return a structured scene description.
+
         Args:
             rgb_frame: numpy array of shape (H, W, 3) with uint8 values
-            
+            obs: full observation, used only by the offline rule perceiver
+
         Returns:
             dict with keys: summary, entities, resources, terrain, threats, actionable_items
         """
+        if self.api == "rule":
+            return self._rule_perception(obs or {})
+
         img = Image.fromarray(rgb_frame)
         img_b64 = self._encode_image(img)
 
@@ -97,6 +115,25 @@ class VLMPerceiver:
         except Exception as e:
             logger.warning(f"Perception failed: {e}. Returning fallback.")
             return self._fallback_perception()
+
+    def _rule_perception(self, obs: dict) -> dict:
+        """Offline perception: reads the mock env's ground-truth visibility list."""
+        visible = obs.get("mock_visible", [])
+        if not visible:
+            p = self._fallback_perception()
+            p["summary"] = "Nothing of interest in view"
+            return p
+        entities = [v for v in visible if v["type"] in ANIMALS]
+        resources = [v for v in visible if v["type"] not in ANIMALS]
+        names = ", ".join(f"{v['type']} ({v['distance']}, {v['direction']})" for v in visible)
+        return {
+            "summary": f"Visible: {names}",
+            "entities": entities,
+            "resources": resources,
+            "terrain": {"biome": "plains", "ground": "grass", "obstacles": [], "time_of_day": "day"},
+            "threats": [],
+            "actionable_items": [v["type"] for v in visible if v["distance"] == "near"],
+        }
 
     def _encode_image(self, img: Image.Image, max_size: int = 512) -> str:
         """Resize and encode image to base64."""
@@ -115,7 +152,11 @@ class VLMPerceiver:
             return self._call_ollama(img_b64)
 
     def _call_gemini(self, img: Image.Image) -> str:
-        response = self.client.generate_content([self.prompt, img])
+        kind, client = self.client
+        if kind == "genai":
+            response = client.models.generate_content(model=self.model, contents=[self.prompt, img])
+        else:
+            response = client.GenerativeModel(self.model).generate_content([self.prompt, img])
         return response.text
 
     def _call_openai(self, img_b64: str) -> str:

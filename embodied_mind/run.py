@@ -1,8 +1,12 @@
 """
-EmbodiedMind — Single task runner.
+EmbodiedMind single-task runner.
 
 Usage:
-    python -m embodied_mind.run --task "harvest_wool" --model "gemini-2.0-flash" --verbose
+    # Real MineDojo run (needs MineDojo + an API key, see docs/RUNNING.md)
+    python -m embodied_mind.run --task harvest_wool --model gemini-2.5-flash --num_episodes 3
+
+    # Offline pipeline check, no Minecraft or API key needed
+    python -m embodied_mind.run --env mock --model rule --task harvest_wood
 """
 
 import argparse
@@ -10,8 +14,6 @@ import json
 import logging
 import time
 from pathlib import Path
-
-import minedojo
 
 from .agent import EmbodiedMindAgent, AgentConfig
 
@@ -21,132 +23,133 @@ logging.basicConfig(
 )
 logger = logging.getLogger("embodied_mind")
 
-# MineDojo task mapping
+# Short task names -> MineDojo programmatic task ids
 TASK_MAP = {
-    "harvest_wool": "harvest_wool_shear",
-    "harvest_milk": "harvest_milk",
-    "harvest_wood": "harvest_log_oak",
-    "harvest_cobblestone": "harvest_cobblestone",
-    "survive_5_days": "survive_5_days",
-    "craft_stone_pickaxe": "techtree_stone_pickaxe",
+    "harvest_wool": "harvest_wool_with_shears_and_sheep",
+    "harvest_milk": "harvest_milk_with_empty_bucket_and_cow",
+    "harvest_wood": "harvest_1_log",
+    "harvest_cobblestone": "harvest_1_cobblestone_with_wooden_pickaxe",
+    "survive_5_days": "survival_5_days",
+    "craft_wooden_pickaxe": "techtree_from_barehand_to_wooden_pickaxe",
+    "craft_stone_pickaxe": "techtree_from_barehand_to_stone_pickaxe",
 }
 
 
-def create_env(task: str, seed: int = 0):
-    """Create a MineDojo environment for the given task."""
+def create_env(task: str, seed: int = 0, env_type: str = "minedojo", max_steps: int = 3000):
+    """Create an environment. 'mock' needs no Minecraft; 'minedojo' needs MineDojo installed."""
+    if env_type == "mock":
+        from .mock_env import MockMinecraftEnv
+        env = MockMinecraftEnv(task=task, seed=seed, max_steps=max_steps)
+        logger.info(f"Created mock env | task={task} seed={seed}")
+        return env
+
+    import minedojo  # imported here so mock runs work without MineDojo
+    from .minedojo_adapter import MineDojoWrapper
+
     minedojo_task = TASK_MAP.get(task, task)
-
-    env = minedojo.make(
-        task_id=minedojo_task,
-        image_size=(256, 256),
-        seed=seed,
-    )
+    valid = _minedojo_task_ids()
+    if valid and minedojo_task not in valid:
+        import difflib
+        close = difflib.get_close_matches(minedojo_task, valid, n=5, cutoff=0.3)
+        raise ValueError(f"'{minedojo_task}' is not a MineDojo task id. Close matches: {close}. "
+                         f"Run with --list_tasks to see all ids, then pass one with --task.")
+    raw = minedojo.make(task_id=minedojo_task, image_size=(256, 256), seed=seed)
     logger.info(f"Created MineDojo env | task={minedojo_task} seed={seed}")
-    return env
+    return MineDojoWrapper(raw)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="EmbodiedMind — Run a single task")
-    parser.add_argument("--task", type=str, required=True,
-                        help="Task name (e.g., harvest_wool, harvest_milk, survive_5_days)")
-    parser.add_argument("--model", type=str, default="gemini-2.0-flash",
-                        help="VLM/LLM model to use")
-    parser.add_argument("--max_steps", type=int, default=3000,
-                        help="Maximum steps per episode")
-    parser.add_argument("--memory_enabled", action="store_true", default=True,
-                        help="Enable episodic memory")
-    parser.add_argument("--no_memory", action="store_true",
-                        help="Disable episodic memory")
-    parser.add_argument("--num_episodes", type=int, default=1,
-                        help="Number of episodes to run")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed")
-    parser.add_argument("--output_dir", type=str, default="results",
-                        help="Directory to save results")
-    parser.add_argument("--verbose", action="store_true",
-                        help="Enable verbose logging")
-    args = parser.parse_args()
+def _minedojo_task_ids() -> list:
+    """All MineDojo task ids, or [] if the installed version does not expose them."""
+    try:
+        import minedojo.tasks as T
+        for name in ("ALL_PROGRAMMATIC_TASK_IDS", "ALL_TASK_IDS"):
+            if hasattr(T, name):
+                return list(getattr(T, name))
+    except Exception:
+        pass
+    return []
 
-    if args.verbose:
-        logging.getLogger("embodied_mind").setLevel(logging.DEBUG)
+
+def run(task, model="gemini-2.5-flash", env_type="minedojo", num_episodes=1, max_steps=3000,
+        memory=True, seed=42, output_dir="results", verbose=False):
+    """Run episodes of one task and return a summary dict. Memory carries over between episodes."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    tag = f"{env_type}_{task}_{model}_{'mem' if memory else 'nomem'}".replace("/", "-")
 
     config = AgentConfig(
-        model=args.model,
-        max_steps=args.max_steps,
-        memory_enabled=not args.no_memory,
-        verbose=args.verbose,
+        model=model,
+        max_steps=max_steps,
+        memory_enabled=memory,
+        verbose=verbose,
+        memory_path=str(out / f"{tag}_memory.json") if memory else None,
+        skills_path=str(out / f"{tag}_skills.json"),
     )
+    # Start each run with empty memory/skills so runs are comparable
+    for p in (config.memory_path, config.skills_path):
+        if p and Path(p).exists():
+            Path(p).unlink()
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    all_results = []
-
-    for ep in range(args.num_episodes):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Episode {ep + 1}/{args.num_episodes}")
-        logger.info(f"{'='*60}")
-
-        env = create_env(args.task, seed=args.seed + ep)
-
+    results = []
+    for ep in range(num_episodes):
+        env = create_env(task, seed=seed + ep, env_type=env_type, max_steps=max_steps)
         try:
             agent = EmbodiedMindAgent(env, config)
             start = time.time()
-            result = agent.run_episode(task=args.task, seed=args.seed + ep)
-            elapsed = time.time() - start
-
+            result = agent.run_episode(task=task, seed=seed + ep)
             result["episode"] = ep
-            result["elapsed_seconds"] = elapsed
-            all_results.append(result)
-
-            logger.info(
-                f"Episode {ep + 1} complete | "
-                f"success={result['success']} "
-                f"reward={result['total_reward']:.2f} "
-                f"steps={result['steps']} "
-                f"time={elapsed:.1f}s"
-            )
-            logger.info(f"Summary: {result['summary']}")
-
-            # Save episode result
-            ep_path = output_dir / f"{args.task}_ep{ep}.json"
-            with open(ep_path, "w") as f:
-                # Remove non-serializable items from log
-                save_result = {k: v for k, v in result.items() if k != "log"}
-                json.dump(save_result, f, indent=2, default=str)
-
+            result["elapsed_seconds"] = round(time.time() - start, 2)
+            results.append({k: v for k, v in result.items() if k != "log"})
+            logger.info(f"Episode {ep + 1}/{num_episodes} | success={result['success']} "
+                        f"steps={result['steps']} | {result['summary']}")
         finally:
             env.close()
 
-    # Print summary
-    print(f"\n{'='*60}")
-    print(f"RESULTS SUMMARY — {args.task}")
-    print(f"{'='*60}")
-    successes = sum(1 for r in all_results if r["success"])
-    avg_reward = sum(r["total_reward"] for r in all_results) / len(all_results)
-    avg_steps = sum(r["steps"] for r in all_results) / len(all_results)
-    print(f"  Episodes:     {args.num_episodes}")
-    print(f"  Success rate: {successes}/{args.num_episodes} ({100*successes/args.num_episodes:.0f}%)")
-    print(f"  Avg reward:   {avg_reward:.2f}")
-    print(f"  Avg steps:    {avg_steps:.0f}")
-    print(f"  Model:        {args.model}")
-    print(f"  Memory:       {'enabled' if config.memory_enabled else 'disabled'}")
+    n = len(results)
+    summary = {
+        "env": env_type,
+        "task": task,
+        "model": model,
+        "memory_enabled": memory,
+        "num_episodes": n,
+        "success_rate": sum(r["success"] for r in results) / n,
+        "avg_steps": sum(r["steps"] for r in results) / n,
+        "avg_steps_success": (sum(r["steps"] for r in results if r["success"]) /
+                              max(1, sum(r["success"] for r in results))),
+        "episodes": results,
+    }
+    (out / f"{tag}_summary.json").write_text(json.dumps(summary, indent=2, default=str))
+    return summary
 
-    # Save aggregate results
-    agg_path = output_dir / f"{args.task}_summary.json"
-    with open(agg_path, "w") as f:
-        json.dump({
-            "task": args.task,
-            "model": args.model,
-            "num_episodes": args.num_episodes,
-            "success_rate": successes / args.num_episodes,
-            "avg_reward": avg_reward,
-            "avg_steps": avg_steps,
-            "memory_enabled": config.memory_enabled,
-            "episodes": [{k: v for k, v in r.items() if k != "log"} for r in all_results],
-        }, f, indent=2, default=str)
 
-    print(f"\nResults saved to {output_dir}/")
+def main():
+    parser = argparse.ArgumentParser(description="EmbodiedMind: run a single task")
+    parser.add_argument("--task", help=f"One of {sorted(TASK_MAP)} or a MineDojo task id")
+    parser.add_argument("--list_tasks", action="store_true", help="Print MineDojo task ids and exit")
+    parser.add_argument("--env", choices=["minedojo", "mock"], default="minedojo")
+    parser.add_argument("--model", default="gemini-2.5-flash",
+                        help="gemini-*, gpt-*, ollama/llava, or 'rule' for offline runs")
+    parser.add_argument("--max_steps", type=int, default=3000)
+    parser.add_argument("--num_episodes", type=int, default=1)
+    parser.add_argument("--no_memory", action="store_true", help="Disable episodic memory")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output_dir", default="results")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    if args.list_tasks:
+        ids = _minedojo_task_ids()
+        print("\n".join(ids) if ids else "MineDojo is not installed or does not list its task ids.")
+        return
+    if not args.task:
+        parser.error("--task is required")
+
+    s = run(args.task, args.model, args.env, args.num_episodes, args.max_steps,
+            not args.no_memory, args.seed, args.output_dir, args.verbose)
+    print(f"\n{args.task} | env={s['env']} model={s['model']} memory={s['memory_enabled']}")
+    print(f"  success rate {s['success_rate']:.0%} over {s['num_episodes']} episodes, "
+          f"avg steps {s['avg_steps']:.0f}")
+    print(f"Results saved to {args.output_dir}/")
 
 
 if __name__ == "__main__":

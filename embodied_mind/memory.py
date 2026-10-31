@@ -7,6 +7,7 @@ import os
 import json
 import logging
 import hashlib
+import re
 from typing import Optional
 from pathlib import Path
 
@@ -54,7 +55,7 @@ class EpisodicMemory:
 
     def _init_embedder(self):
         """Initialize embedding client."""
-        if "text-embedding" in self.embed_model:
+        if "text-embedding" in self.embed_model and os.getenv("OPENAI_API_KEY"):
             from openai import OpenAI
             self.embed_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             self.embed_api = "openai"
@@ -140,20 +141,17 @@ class EpisodicMemory:
 
     def _embed_hash(self, text: str) -> list[float]:
         """
-        Simple deterministic hash-based embedding for offline/local use.
-        Not as good as learned embeddings but works without API keys.
+        Offline bag-of-words embedding using the hashing trick: each token is
+        hashed to a bucket with a sign. Texts that share words get similar
+        vectors, so recall works without an API key (weaker than learned
+        embeddings, but meaningful).
         """
-        # Create multiple hashes for different "dimensions"
-        embedding = []
-        for i in range(self.embed_dim):
-            h = hashlib.sha256(f"{text}_{i}".encode()).hexdigest()
-            val = int(h[:8], 16) / (2**32) - 0.5  # Normalize to [-0.5, 0.5]
-            embedding.append(val)
-        # Normalize
-        norm = np.linalg.norm(embedding)
-        if norm > 0:
-            embedding = (np.array(embedding) / norm).tolist()
-        return embedding
+        vec = np.zeros(self.embed_dim)
+        for tok in re.findall(r"[a-z0-9_]+", text.lower()):
+            h = int(hashlib.md5(tok.encode()).hexdigest(), 16)
+            vec[h % self.embed_dim] += 1.0 if (h >> 1) % 2 == 0 else -1.0
+        norm = np.linalg.norm(vec)
+        return (vec / norm).tolist() if norm > 0 else vec.tolist()
 
     @staticmethod
     def _cosine_similarity(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:

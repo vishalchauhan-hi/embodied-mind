@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentConfig:
     """Configuration for EmbodiedMind agent."""
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     max_steps: int = 3000
     memory_enabled: bool = True
     memory_top_k: int = 3
@@ -30,6 +30,9 @@ class AgentConfig:
     perception_interval: int = 5       # Run VLM perception every N steps
     skill_discovery: bool = True
     verbose: bool = False
+    embed_model: str = "text-embedding-3-small"   # falls back to offline hashing without OPENAI_API_KEY
+    memory_path: Optional[str] = None             # JSON file; set it to keep memory across episodes
+    skills_path: Optional[str] = None
 
 
 @dataclass
@@ -44,6 +47,12 @@ class AgentState:
     total_reward: float = 0.0
     action_history: list = field(default_factory=list)
     failures: list = field(default_factory=list)
+    subgoal_start_inventory: dict = field(default_factory=dict)
+    active_skill: Optional[object] = None
+    success: bool = False
+    subgoal_actions: list = field(default_factory=list)       # actions since current subgoal began
+    completed_subgoals: list = field(default_factory=list)    # (subgoal, actions) that succeeded
+    recover_steps: int = 0  # steps left in a "back off and turn" manoeuvre after getting stuck
 
 
 class EmbodiedMindAgent:
@@ -60,8 +69,9 @@ class EmbodiedMindAgent:
         # Core modules
         self.perceiver = VLMPerceiver(model=self.cfg.model)
         self.planner = HierarchicalPlanner(model=self.cfg.model)
-        self.memory = EpisodicMemory() if self.cfg.memory_enabled else None
-        self.skills = SkillLibrary()
+        self.memory = (EpisodicMemory(embed_model=self.cfg.embed_model, persist_path=self.cfg.memory_path)
+                       if self.cfg.memory_enabled else None)
+        self.skills = SkillLibrary(persist_path=self.cfg.skills_path)
         self.executor = ActionExecutor(env)
 
         # State
@@ -76,6 +86,7 @@ class EmbodiedMindAgent:
         """Run a single episode for the given task."""
         logger.info(f"Starting episode | task='{task}' seed={seed}")
 
+        np.random.seed(seed)  # makes the executor's exploration turns repeatable
         obs = self.env.reset()
         self.state = AgentState(current_goal=task)
         episode_log = []
@@ -87,6 +98,8 @@ class EmbodiedMindAgent:
 
             self.state.total_reward += reward
             self.state.step += 1
+            if (isinstance(info, dict) and info.get("success")) or reward > 0:
+                self.state.success = True
             episode_log.append(result["log"])
 
             if self.cfg.verbose and self.state.step % 50 == 0:
@@ -102,7 +115,8 @@ class EmbodiedMindAgent:
             "task": task,
             "steps": self.state.step,
             "total_reward": self.state.total_reward,
-            "success": self.state.total_reward > 0,
+            "success": self.state.success,
+            "final_inventory": dict(obs.get("inventory", {})),
             "summary": summary,
             "log": episode_log,
         }
@@ -113,14 +127,15 @@ class EmbodiedMindAgent:
 
         # 1. Perceive (at configured interval or first step)
         if self._should_perceive():
-            perception = self.perceiver.perceive(obs["rgb"])
+            perception = self.perceiver.perceive(obs["rgb"], obs)
             self.state.last_perception = perception
             log["perception"] = perception
 
         # 2. Recall relevant memories
         memory_context = ""
-        if self.memory and self.state.last_perception:
-            query = f"{self.state.current_goal} | {self.state.last_perception.get('summary', '')}"
+        if self.memory and self._should_replan():
+            summary = (self.state.last_perception or {}).get("summary", "")
+            query = f"{self.state.current_goal} | {summary}"
             memories = self.memory.recall(query, top_k=self.cfg.memory_top_k)
             if memories:
                 memory_context = self._format_memories(memories)
@@ -136,21 +151,28 @@ class EmbodiedMindAgent:
                 failures=self.state.failures[-5:],  # Last 5 failures
             )
             self.state.current_subgoals = plan["subgoals"]
-            self.state.active_subgoal_idx = 0
+            self._set_subgoal(0, obs)
             self.state.last_plan = plan["reasoning"]
             log["plan"] = plan
 
         # 4. Act — execute the current subgoal
         subgoal = self._active_subgoal()
         if subgoal:
-            # Check skill library first
-            skill = self.skills.get(subgoal)
-            if skill:
-                action = skill.next_action(obs)
-                log["action_source"] = "skill_library"
+            if self.state.recover_steps > 0:
+                # Recently stuck: turn away and walk a few steps before trying again
+                self.state.recover_steps -= 1
+                action = self.executor.unstick_action(self.state.recover_steps)
+                log["action_source"] = "recovery"
             else:
-                action = self.executor.subgoal_to_action(subgoal, obs)
-                log["action_source"] = "planner"
+                # Check the skill library once per subgoal, then replay the skill
+                if self.state.active_skill is None:
+                    self.state.active_skill = self.skills.get(subgoal) or False
+                if self.state.active_skill:
+                    action = self.state.active_skill.next_action(obs)
+                    log["action_source"] = "skill_library"
+                else:
+                    action = self.executor.subgoal_to_action(subgoal, obs, self.state.last_perception)
+                    log["action_source"] = "planner"
 
             env_step = self.env.step(action)
             obs_next, reward, done, info = env_step
@@ -166,15 +188,23 @@ class EmbodiedMindAgent:
             })
 
             # Check subgoal completion or failure
+            log["subgoal"] = subgoal
+            if log["action_source"] != "recovery":
+                self.state.subgoal_actions.append(action)
             if reward > 0 or self._subgoal_completed(subgoal, obs_next):
-                self._advance_subgoal()
+                self.state.completed_subgoals.append((subgoal, list(self.state.subgoal_actions)))
+                self._advance_subgoal(obs_next)
             elif self._subgoal_stuck():
                 self.state.failures.append({
                     "subgoal": subgoal,
                     "step": self.state.step,
                     "context": self.state.last_perception,
                 })
-                self._advance_subgoal()
+                self.state.recover_steps = 8
+                if self.state.active_skill:  # replayed skill did not work here; lower its success rate
+                    self.skills.register(subgoal, self.state.active_skill.description,
+                                         self.state.active_skill.actions, success=False)
+                self._advance_subgoal(obs_next)
         else:
             # No subgoal — take noop
             env_step = self.env.step(self.env.action_space.no_op())
@@ -185,16 +215,24 @@ class EmbodiedMindAgent:
 
     # --- Perception scheduling ---
     def _should_perceive(self) -> bool:
+        # Look again right after steering toward a target, so the next turn
+        # uses a fresh view instead of repeating a stale direction.
         return (
-            self.state.step == 0
+            self.executor.last_was_steer
+            or self.state.step == 0
             or self.state.step % self.cfg.perception_interval == 0
             or self.state.last_perception is None
         )
 
     # --- Planning scheduling ---
     def _should_replan(self) -> bool:
-        if self.state.step == 0 or not self.state.current_subgoals:
+        if self.state.step == 0 or self._active_subgoal() is None:
             return True
+        # Periodic and failure-triggered replanning only help a planner that reads the
+        # scene; the rule planner would restart its fixed list, so it replans only
+        # when the list runs out.
+        if self.planner.api == "rule":
+            return False
         if self.state.step % self.cfg.replan_interval == 0:
             return True
         if self.cfg.replan_on_failure and self.state.failures:
@@ -209,15 +247,21 @@ class EmbodiedMindAgent:
             return self.state.current_subgoals[self.state.active_subgoal_idx]
         return None
 
-    def _advance_subgoal(self):
-        self.state.active_subgoal_idx += 1
+    def _set_subgoal(self, idx: int, obs: dict):
+        self.state.active_subgoal_idx = idx
+        self.state.subgoal_start_inventory = dict(obs.get("inventory", {}))
+        self.state.active_skill = None
+        self.state.subgoal_actions = []
+
+    def _advance_subgoal(self, obs: dict):
+        self._set_subgoal(self.state.active_subgoal_idx + 1, obs)
         if self.state.active_subgoal_idx >= len(self.state.current_subgoals):
-            logger.info("All subgoals exhausted — will re-plan next step")
+            logger.debug("All subgoals exhausted, will re-plan next step")
 
     def _subgoal_completed(self, subgoal: str, obs: dict) -> bool:
-        """Heuristic check if subgoal is done based on inventory/state change."""
-        # Delegate to planner for semantic check
-        return self.planner.check_subgoal_completion(subgoal, obs)
+        """Inventory-based check for collect/craft, perception-based for find/approach."""
+        return self.planner.check_subgoal_completion(
+            subgoal, obs, self.state.last_perception, self.state.subgoal_start_inventory)
 
     def _subgoal_stuck(self, patience: int = 20) -> bool:
         """Check if agent has been on the same subgoal too long with no reward."""
@@ -225,6 +269,11 @@ class EmbodiedMindAgent:
         if len(recent) < patience:
             return False
         subgoal = self._active_subgoal()
+        if subgoal.startswith(("find_", "explore_")):
+            patience = patience * 10  # searching legitimately takes longer
+            recent = self.state.action_history[-patience:]
+            if len(recent) < patience:
+                return False
         same_subgoal = all(a["subgoal"] == subgoal for a in recent)
         no_reward = all(a["reward"] <= 0 for a in recent)
         return same_subgoal and no_reward
@@ -233,7 +282,7 @@ class EmbodiedMindAgent:
     def _format_memories(self, memories: list) -> str:
         parts = []
         for i, m in enumerate(memories):
-            outcome = "SUCCESS" if m["reward"] > 0 else "FAILED"
+            outcome = "SUCCESS" if m.get("reward", 0) > 0 else "FAILED"
             parts.append(
                 f"[Memory {i+1}] Task: {m['task']} | Outcome: {outcome}\n"
                 f"  Plan: {m['plan']}\n"
@@ -265,10 +314,7 @@ class EmbodiedMindAgent:
             logger.info(f"Stored episode in memory | total memories={self.memory.size}")
 
         # Discover skills from successful action sequences
-        if self.cfg.skill_discovery and self.state.total_reward > 0:
-            self.skills.discover_from_episode(
-                self.state.action_history,
-                self.state.current_subgoals,
-            )
+        if self.cfg.skill_discovery and self.state.success:
+            self.skills.discover_from_completed(self.state.completed_subgoals)
 
         return summary

@@ -11,6 +11,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Recorded low-level actions only transfer between episodes when they do not
+# depend on where things are in the world. Navigation and mining depend on the
+# scene, so they are left to the planner and executor.
+REPLAYABLE_PREFIXES = ("craft_", "smelt_", "eat_", "equip_")
+
 
 @dataclass
 class Skill:
@@ -69,6 +74,8 @@ class SkillLibrary:
 
     def get(self, subgoal: str) -> Optional[Skill]:
         """Retrieve a skill for the given subgoal, if available and reliable."""
+        if not subgoal.startswith(REPLAYABLE_PREFIXES):
+            return None
         skill = self.skills.get(subgoal)
         if skill and skill.success_rate >= 0.5:
             skill.reset()
@@ -116,13 +123,13 @@ class SkillLibrary:
 
         # Register successful subgoal action sequences
         for sg, actions in subgoal_actions.items():
-            if not actions:
+            if not actions or not sg.startswith(REPLAYABLE_PREFIXES):
                 continue
             # Check if this subgoal had positive reward
             rewards = [e.get("reward", 0) for e in action_history if e.get("subgoal") == sg]
             success = any(r > 0 for r in rewards)
 
-            if success and len(actions) >= 3:
+            if success:
                 self.register(
                     name=sg,
                     description=f"Learned sequence for '{sg}' ({len(actions)} steps)",
@@ -130,6 +137,18 @@ class SkillLibrary:
                     success=True,
                 )
 
+        logger.info(f"Skill discovery complete | library size={len(self.skills)}")
+
+    def discover_from_completed(self, completed: list):
+        """
+        Register skills from subgoals that the agent finished in a successful
+        episode. Only scene-independent subgoals (see REPLAYABLE_PREFIXES) are kept,
+        using the last few actions that completed them.
+        """
+        for sg, actions in completed:
+            if actions and sg.startswith(REPLAYABLE_PREFIXES):
+                tail = actions[-3:]
+                self.register(sg, f"Learned sequence for '{sg}' ({len(tail)} steps)", tail, success=True)
         logger.info(f"Skill discovery complete | library size={len(self.skills)}")
 
     def list_skills(self) -> list[dict]:

@@ -1,198 +1,107 @@
-# 🧠 EmbodiedMind
+# EmbodiedMind
 
-**VLM-Guided Embodied Agent with Hierarchical Planning and Episodic Memory in MineDojo**
+A Minecraft agent that plans with a language model, sees with a vision-language model (VLM), and remembers past episodes. It runs on [MineDojo](https://minedojo.org/).
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Each step the agent looks at the game frame, recalls similar past episodes, asks the planner for an ordered list of subgoals, and turns the current subgoal into a game action. At the end of an episode it writes a short lesson into its memory, so the next episode can use it.
 
-EmbodiedMind is a research framework for building **multimodal embodied agents** that perceive, reason, plan, and act in open-ended 3D environments. Built on [MineDojo](https://minedojo.org/) (Minecraft), it combines Vision-Language Models (VLMs) for grounded perception, LLMs for hierarchical task planning, and an episodic memory system for experience-driven adaptation.
-
-
-## 🎯 Key Features
-
-- **Multimodal Perception**: VLM-based visual grounding that converts raw game frames into structured scene descriptions (entities, resources, terrain, threats)
-- **Hierarchical Planning**: Two-level planner — a high-level LLM strategist decomposes goals into subgoals, and a low-level action translator maps subgoals to executable MineDojo actions
-- **Episodic Memory**: Vector-similarity retrieval of past experiences to enable in-context learning — the agent recalls what worked (and what failed) in similar situations
-- **Skill Library**: Reusable, composable action sequences discovered through experience and stored for future retrieval
-- **Evaluation Suite**: Automated benchmarking across MineDojo Harvest, Survival, and Tech Tree tasks with standardized metrics
-
-## 🏗️ Architecture
+## How it works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   EmbodiedMind Agent                │
-├──────────┬──────────────┬──────────┬────────────────┤
-│  Visual  │  Hierarchical│ Episodic │    Skill       │
-│ Perceiver│   Planner    │  Memory  │   Library      │
-│  (VLM)   │   (LLM)      │ (Vector) │  (Code-as-    │
-│          │              │          │   Action)      │
-├──────────┴──────────────┴──────────┴────────────────┤
-│              Action Executor (MineDojo API)          │
-├─────────────────────────────────────────────────────┤
-│              MineDojo Environment (Minecraft)        │
-└─────────────────────────────────────────────────────┘
+frame -> VLM perceiver -> scene description (things in view, their distance and direction)
+                                   |
+episodic memory -> recall similar past episodes
+                                   |
+LLM planner -> subgoals, e.g. find_tree, approach_tree, mine_log, craft_planks, ...
+                                   |
+action executor -> steer toward the target, mine, attack or craft
+                                   |
+MineDojo adapter -> MineDojo's 8-part action format
 ```
 
-**Agent Loop:**
-1. **Observe** → Capture RGB frame from MineDojo environment
-2. **Perceive** → VLM extracts structured scene description (entities, inventory, threats)
-3. **Recall** → Query episodic memory for relevant past experiences
-4. **Plan** → LLM generates/updates hierarchical plan using perception + memory context
-5. **Act** → Translate plan step into MineDojo action and execute
-6. **Reflect** → Store outcome in episodic memory for future retrieval
+- `perceiver.py` sends the frame to a VLM (Gemini, OpenAI or a local LLaVA through Ollama) and asks for JSON describing what is in view.
+- `planner.py` asks an LLM for subgoals given the goal, the scene, the inventory, recent failures and recalled memories. A rule-based planner covers offline runs and API failures.
+- `action_executor.py` turns a subgoal into an action. It steers toward targets using the direction and distance the VLM reported, and looks again after each turn.
+- `memory.py` stores one entry per episode and recalls the closest ones by embedding similarity. It uses OpenAI embeddings when a key is set and an offline word-hashing embedding otherwise.
+- `skills.py` keeps short action sequences for subgoals that do not depend on the scene, such as crafting, and stops using a skill when its success rate drops.
+- `minedojo_adapter.py` converts readable actions into MineDojo's action array and flattens MineDojo observations.
+- `mock_env.py` is a small offline stand-in for Minecraft, used for tests.
 
-## 📦 Installation
-
-### Prerequisites
-- Python ≥ 3.9
-- JDK 8 (for Minecraft backend)
-- GPU recommended for VLM inference (or use API-based models)
-
-### Setup
+## Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/embodied-mind.git
+git clone https://github.com/vishalchauhan-hi/embodied-mind.git
 cd embodied-mind
-
-# Create conda environment
-conda create -n embodied-mind python=3.10 -y
-conda activate embodied-mind
-
-# Install MineDojo
-pip install minedojo
-
-# Install project dependencies
-pip install -e .
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q            # offline tests, no Minecraft or API key needed
 ```
 
-### Configure API Keys
+For real runs you also need MineDojo, Java 8 and an API key. See [docs/RUNNING.md](docs/RUNNING.md).
+
+## Run
+
+Offline check that the whole loop works (no Minecraft, no API key):
 
 ```bash
-cp .env.example .env
-# Edit .env with your API key (supports OpenAI, Google Gemini, or local models)
+python -m embodied_mind.evaluate --env mock --model rule --task_suite all --num_episodes 10
 ```
 
-## 🚀 Quick Start
-
-### Run a single task
+Real MineDojo run:
 
 ```bash
-python -m embodied_mind.run \
-    --task "harvest_milk" \
-    --model "gemini-2.0-flash" \
-    --max_steps 3000 \
-    --memory_enabled \
-    --verbose
+cp .env.example .env          # add GOOGLE_API_KEY or OPENAI_API_KEY
+python -m embodied_mind.run --task harvest_wool --model gemini-2.5-flash --num_episodes 3
+python -m embodied_mind.evaluate --task_suite harvest --model gemini-2.5-flash --num_episodes 5
 ```
 
-### Run the evaluation suite
+`evaluate` runs every task with memory off and on and writes `results/benchmark.csv` and `results/benchmark.md`.
 
-```bash
-python -m embodied_mind.evaluate \
-    --task_suite harvest \
-    --model "gemini-2.0-flash" \
-    --num_episodes 5 \
-    --output_dir results/
-```
+## Results
 
-### Visualize agent behavior
+MineDojo results are not in yet. The table below is from the offline mock environment, with the rule planner and 20 episodes per row. It shows that the loop runs end to end. It is not a MineDojo result and should not be read as one.
 
-```bash
-python -m embodied_mind.visualize \
-    --replay results/harvest_milk_ep0.json \
-    --show_memory \
-    --show_plan
-```
+| Task | Success rate | Avg steps |
+|---|---|---|
+| harvest_wood | 100% | 55 |
+| harvest_wool | 100% | 26 |
+| harvest_cobblestone | 100% | 220 |
+| craft_wooden_pickaxe | 100% | 164 |
+| craft_stone_pickaxe | 100% | 459 |
 
+Runs are seeded, so the same command gives the same numbers. Memory only changes what the LLM planner sees, so turning it on gives identical numbers with the rule planner. The memory comparison needs real MineDojo runs with an LLM.
 
-## 📊 Benchmark Results
-
-🚧 **Work in Progress** — Evaluation experiments are currently being run on MineDojo Programmatic Tasks (Harvest, Survival, Tech Tree). Results will be updated here as they become available.
-
-## 📁 Project Structure
+## Project layout
 
 ```
-embodied-mind/
-├── embodied_mind/
-│   ├── __init__.py
-│   ├── agent.py              # Main agent loop
-│   ├── perceiver.py          # VLM-based visual perception
-│   ├── planner.py            # Hierarchical LLM planner
-│   ├── memory.py             # Episodic memory with vector retrieval
-│   ├── skills.py             # Skill library management
-│   ├── action_executor.py    # MineDojo action translation
-│   ├── run.py                # Single-task runner
-│   ├── evaluate.py           # Benchmark evaluation
-│   └── visualize.py          # Replay visualization
-├── configs/
-│   ├── default.yaml          # Default agent config
-│   └── tasks.yaml            # Task definitions
-├── prompts/
-│   ├── perceiver.txt         # VLM perception prompt
-│   ├── planner.txt           # LLM planning prompt
-│   └── reflector.txt         # Post-action reflection prompt
-├── results/                  # Evaluation outputs
-├── assets/                   # Architecture diagrams
-├── tests/
-│   └── test_agent.py
-├── setup.py
-├── .env.example
-└── README.md
+embodied_mind/
+  agent.py              main loop: perceive, recall, plan, act, reflect
+  perceiver.py          VLM scene description
+  planner.py            LLM and rule-based subgoal planning
+  memory.py             episodic memory
+  skills.py             skill library
+  action_executor.py    subgoal -> action
+  minedojo_adapter.py   MineDojo action and observation conversion
+  mock_env.py           offline test environment
+  run.py                run one task
+  evaluate.py           benchmark across tasks, memory off and on
+configs/default.yaml
+prompts/perceiver.txt
+docs/RUNNING.md
+tests/test_agent.py
 ```
 
-## 🔬 Research Details
+## References
 
-### Visual Perception
-The perceiver sends RGB frames to a VLM (Gemini, GPT-4o, or local LLaVA) with a structured prompt asking for:
-- **Entities**: Nearby mobs, animals, villagers with estimated distances
-- **Resources**: Visible blocks, items, craftable materials
-- **Terrain**: Biome type, elevation, obstacles
-- **Threats**: Hostile mobs, environmental dangers
-- **Inventory State**: Current items and their quantities
+- Fan et al., MineDojo: Building Open-Ended Embodied Agents with Internet-Scale Knowledge, NeurIPS 2022.
+- Wang et al., Voyager: An Open-Ended Embodied Agent with Large Language Models, 2023.
+- Liu et al., Odyssey: Empowering Minecraft Agents with Open-World Skills, IJCAI 2025.
+- Lifshitz et al., STEVE-1: A Generative Model for Text-to-Behavior in Minecraft, 2023.
 
-### Hierarchical Planning
-The planner operates at two levels:
-- **Strategist**: Decomposes the goal into an ordered list of subgoals (e.g., "craft stone pickaxe" → find_stone → mine_cobblestone × 3 → find_wood → craft_planks → craft_sticks → craft_pickaxe)
-- **Tactician**: Converts each subgoal into a sequence of MineDojo-compatible actions, re-planning when the environment state changes unexpectedly
+## Contact
 
-### Episodic Memory
-Each experience is stored as:
-```python
-{
-    "task": str,               # Task being attempted
-    "observation": str,        # Scene description at decision point
-    "plan": str,               # Plan that was executed
-    "actions": List[str],      # Action sequence taken
-    "outcome": str,            # Success/failure description
-    "reward": float,           # MineDojo reward signal
-    "embedding": List[float]   # Text embedding for similarity search
-}
-```
+Vishal Chauhan, Assistant Professor, The University of Tokyo
+vishalutokyo@gmail.com, vishalchauhan@g.ecc.u-tokyo.ac.jp
 
-At decision time, the agent retrieves the top-k most similar past experiences and includes them as in-context examples for the planner.
+## License
 
-### Adaptation via In-Context Learning
-Rather than fine-tuning model weights, EmbodiedMind adapts through:
-1. **Experience accumulation**: Memory grows across episodes
-2. **Failure avoidance**: Failed strategies are explicitly noted in retrieved context
-3. **Strategy transfer**: Successful plans from similar tasks inform new situations
-
-## 🤝 Contributing
-
-Contributions are welcome! 
-
-## 📄 License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
-## 📚 References
-
-- [MineDojo: Building Open-Ended Embodied Agents with Internet-Scale Knowledge](https://minedojo.org/) (NeurIPS 2022, Outstanding Paper)
-- [Voyager: An Open-Ended Embodied Agent with Large Language Models](https://voyager.minedojo.org/)
-- [ODYSSEY: Empowering Minecraft Agents with Open-World Skills](https://arxiv.org/abs/2407.15325) (IJCAI 2025)
-- [STEVE-1: A Generative Model for Text-to-Behavior in Minecraft](https://arxiv.org/abs/2306.00937)
-
-## ✉️ Contact
-
-**Vishal Chauhan** — [vishalchauhan@outlook.sg](mailto:vishalchauhan@outlook.sg)
-Ph.D. Candidate, The University of Tokyo
+MIT, see [LICENSE](LICENSE).
