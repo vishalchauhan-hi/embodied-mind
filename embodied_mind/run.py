@@ -29,7 +29,8 @@ TASK_MAP = {
     "harvest_milk": "harvest_milk_with_empty_bucket_and_cow",
     "harvest_wood": "harvest_1_log",
     "harvest_cobblestone": "harvest_1_cobblestone_with_wooden_pickaxe",
-    "survive_5_days": "survival_5_days",
+    # MineDojo has no 5-day survival id; "survival" is the bare-handed one (its built-in target is 100 days)
+    "survive_5_days": "survival",
     "craft_wooden_pickaxe": "techtree_from_barehand_to_wooden_pickaxe",
     "craft_stone_pickaxe": "techtree_from_barehand_to_stone_pickaxe",
 }
