@@ -8,6 +8,11 @@ A Minecraft agent that plans with a language model, sees with a vision-language 
 
 Each step the agent looks at the game frame, recalls similar past episodes, asks the planner for an ordered list of subgoals, and turns the current subgoal into a game action. At the end of an episode it writes a short lesson into its memory, so the next episode can use it.
 
+<p align="center">
+  <img src="docs/assets/agent.gif" width="384" alt="EmbodiedMind agent exploring a Minecraft village in MineDojo">
+</p>
+<p align="center"><sub>The agent on MineDojo <code>harvest_wood</code> with a local 7B model (<code>qwen2.5vl:7b</code>), first 150 steps. The bar shows the planner's current subgoal; this run drifts from trees to grass, crafting and crops (see <a href="#results">Results</a>).</sub></p>
+
 ## Status
 
 - The full loop (perceive, recall, plan, act, reflect) runs end to end on real MineDojo, on Linux and on Apple Silicon Macs through Rosetta.
