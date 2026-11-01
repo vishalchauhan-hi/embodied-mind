@@ -7,7 +7,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04: the newest image with a prebuilt Python 3.9 (MineDojo's version)
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
