@@ -1,8 +1,18 @@
 # EmbodiedMind
 
+[![tests](https://github.com/vishalchauhan-hi/embodied-mind/actions/workflows/tests.yml/badge.svg)](https://github.com/vishalchauhan-hi/embodied-mind/actions/workflows/tests.yml)
+![Python 3.9 | 3.11 | 3.12](https://img.shields.io/badge/python-3.9%20%7C%203.11%20%7C%203.12-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A Minecraft agent that plans with a language model, sees with a vision-language model (VLM), and remembers past episodes. It runs on [MineDojo](https://minedojo.org/).
 
 Each step the agent looks at the game frame, recalls similar past episodes, asks the planner for an ordered list of subgoals, and turns the current subgoal into a game action. At the end of an episode it writes a short lesson into its memory, so the next episode can use it.
+
+## Status
+
+- The full loop (perceive, recall, plan, act, reflect) runs end to end on real MineDojo, on Linux and on Apple Silicon Macs through Rosetta.
+- Unit tests and an offline smoke benchmark run in CI on Python 3.9, 3.11 and 3.12.
+- LLM-backed MineDojo evaluation is in progress; numbers will be added under [Results](#results) when they are in.
 
 ## How it works
 
@@ -36,7 +46,7 @@ pip install -e ".[dev]"
 pytest -q            # offline tests, no Minecraft or API key needed
 ```
 
-For real runs you also need MineDojo, Java 8 and an API key. See [docs/RUNNING.md](docs/RUNNING.md).
+For real runs you also need MineDojo, Java 8 and an API key. [docs/RUNNING.md](docs/RUNNING.md) covers Linux and Apple Silicon, including fixes for current MineDojo install problems (gym 0.21 metadata, NumPy 2, the missing MixinGradle build plugin).
 
 ## Run
 
@@ -50,15 +60,17 @@ Real MineDojo run:
 
 ```bash
 cp .env.example .env          # add GOOGLE_API_KEY or OPENAI_API_KEY
-python -m embodied_mind.run --task harvest_wool --model gemini-2.5-flash --num_episodes 3
-python -m embodied_mind.evaluate --task_suite harvest --model gemini-2.5-flash --num_episodes 5
+python -m embodied_mind.run --task harvest_wool --model gemini-3.8-flash --num_episodes 3
+python -m embodied_mind.evaluate --task_suite harvest --model gemini-3.8-flash --num_episodes 5
 ```
 
 `evaluate` runs every task with memory off and on and writes `results/benchmark.csv` and `results/benchmark.md`.
 
 ## Results
 
-MineDojo results are not in yet. The table below is from the offline mock environment, with the rule planner and 20 episodes per row. It shows that the loop runs end to end. It is not a MineDojo result and should not be read as one.
+MineDojo results are not in yet. The first `harvest_wood` runs on MineDojo (`results/`) completed 500 steps each, but most API calls failed (a retired model, then the free-tier daily limit), so the agent ran on its rule fallback and those runs say nothing about the LLM agent.
+
+The table below is from the offline mock environment, with the rule planner and 20 episodes per row. It shows that the loop runs end to end. It is not a MineDojo result and should not be read as one.
 
 | Task | Success rate | Avg steps |
 |---|---|---|

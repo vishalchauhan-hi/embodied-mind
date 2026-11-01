@@ -61,7 +61,7 @@ Respond ONLY with a JSON object (no markdown, no backticks):
 class VLMPerceiver:
     """Converts raw RGB frames into structured scene descriptions using a VLM."""
 
-    def __init__(self, model: str = "gemini-2.5-flash"):
+    def __init__(self, model: str = "gemini-3.8-flash"):
         self.model = model
         self.prompt = self._load_prompt()
         self._init_client()

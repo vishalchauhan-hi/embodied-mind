@@ -17,7 +17,8 @@ setup(
         "requests>=2.28",
     ],
     extras_require={
-        "minedojo": ["minedojo"],
+        # MineDojo 0.1 uses np.unicode_, which NumPy 2 removed
+        "minedojo": ["minedojo", "numpy<2"],
         "gemini": ["google-genai"],
         "openai": ["openai>=1.0"],
         "dev": ["pytest"],

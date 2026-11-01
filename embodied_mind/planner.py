@@ -56,7 +56,7 @@ class HierarchicalPlanner:
     - Tactician (rule-based + LLM): Maps subgoal → MineDojo action sequence
     """
 
-    def __init__(self, model: str = "gemini-2.5-flash"):
+    def __init__(self, model: str = "gemini-3.8-flash"):
         self.model = model
         self._init_client()
         logger.info(f"HierarchicalPlanner initialized | model={model}")

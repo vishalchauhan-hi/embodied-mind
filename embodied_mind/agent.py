@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentConfig:
     """Configuration for EmbodiedMind agent."""
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.8-flash"
     max_steps: int = 3000
     memory_enabled: bool = True
     memory_top_k: int = 3

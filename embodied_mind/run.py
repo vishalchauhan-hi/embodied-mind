@@ -3,7 +3,7 @@ EmbodiedMind single-task runner.
 
 Usage:
     # Real MineDojo run (needs MineDojo + an API key, see docs/RUNNING.md)
-    python -m embodied_mind.run --task harvest_wool --model gemini-2.5-flash --num_episodes 3
+    python -m embodied_mind.run --task harvest_wool --model gemini-3.8-flash --num_episodes 3
 
     # Offline pipeline check, no Minecraft or API key needed
     python -m embodied_mind.run --env mock --model rule --task harvest_wood
@@ -71,7 +71,7 @@ def _minedojo_task_ids() -> list:
     return []
 
 
-def run(task, model="gemini-2.5-flash", env_type="minedojo", num_episodes=1, max_steps=3000,
+def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max_steps=3000,
         memory=True, seed=42, output_dir="results", verbose=False):
     """Run episodes of one task and return a summary dict. Memory carries over between episodes."""
     out = Path(output_dir)
@@ -128,7 +128,7 @@ def main():
     parser.add_argument("--task", help=f"One of {sorted(TASK_MAP)} or a MineDojo task id")
     parser.add_argument("--list_tasks", action="store_true", help="Print MineDojo task ids and exit")
     parser.add_argument("--env", choices=["minedojo", "mock"], default="minedojo")
-    parser.add_argument("--model", default="gemini-2.5-flash",
+    parser.add_argument("--model", default="gemini-3.8-flash",
                         help="gemini-*, gpt-*, ollama/llava, or 'rule' for offline runs")
     parser.add_argument("--max_steps", type=int, default=3000)
     parser.add_argument("--num_episodes", type=int, default=1)

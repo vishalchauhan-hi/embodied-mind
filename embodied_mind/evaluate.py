@@ -3,7 +3,7 @@ EmbodiedMind benchmark: runs a task suite with and without episodic memory and
 writes results/benchmark.csv and results/benchmark.md.
 
 Usage:
-    python -m embodied_mind.evaluate --task_suite harvest --model gemini-2.5-flash --num_episodes 5
+    python -m embodied_mind.evaluate --task_suite harvest --model gemini-3.8-flash --num_episodes 5
     python -m embodied_mind.evaluate --env mock --model rule --task_suite all   # offline pipeline check
 """
 
@@ -24,7 +24,7 @@ def main():
     ap = argparse.ArgumentParser(description="EmbodiedMind benchmark")
     ap.add_argument("--task_suite", choices=sorted(SUITES), default="harvest")
     ap.add_argument("--env", choices=["minedojo", "mock"], default="minedojo")
-    ap.add_argument("--model", default="gemini-2.5-flash")
+    ap.add_argument("--model", default="gemini-3.8-flash")
     ap.add_argument("--num_episodes", type=int, default=5)
     ap.add_argument("--max_steps", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=42)
