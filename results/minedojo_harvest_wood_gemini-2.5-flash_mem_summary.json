@@ -1,0 +1,22 @@
+{
+  "env": "minedojo",
+  "task": "harvest_wood",
+  "model": "gemini-2.5-flash",
+  "memory_enabled": true,
+  "num_episodes": 1,
+  "success_rate": 0.0,
+  "avg_steps": 500.0,
+  "avg_steps_success": 0.0,
+  "episodes": [
+    {
+      "task": "harvest_wood",
+      "steps": 500,
+      "total_reward": 0.0,
+      "success": false,
+      "final_inventory": {},
+      "summary": "Episode FAILED. Reward: 0.00. Steps: 500.",
+      "episode": 0,
+      "elapsed_seconds": 360.32
+    }
+  ]
+}
