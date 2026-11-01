@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -76,7 +77,8 @@ def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max
     """Run episodes of one task and return a summary dict. Memory carries over between episodes."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    tag = f"{env_type}_{task}_{model}_{'mem' if memory else 'nomem'}".replace("/", "-")
+    # Model names like "ollama/qwen2.5vl:7b" contain characters Windows filenames cannot hold
+    tag = re.sub(r"[^A-Za-z0-9._-]", "-", f"{env_type}_{task}_{model}_{'mem' if memory else 'nomem'}")
 
     config = AgentConfig(
         model=model,
