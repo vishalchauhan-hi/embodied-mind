@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import copy
 import json
 import logging
 import re
@@ -55,7 +56,15 @@ def create_env(task: str, seed: int = 0, env_type: str = "minedojo", max_steps: 
         close = difflib.get_close_matches(minedojo_task, valid, n=5, cutoff=0.3)
         raise ValueError(f"'{minedojo_task}' is not a MineDojo task id. Close matches: {close}. "
                          f"Run with --list_tasks to see all ids, then pass one with --task.")
-    raw = minedojo.make(task_id=minedojo_task, image_size=(256, 256), seed=seed)
+    # minedojo.make pops keys out of its shared task table, so a second make() of the same
+    # task in one process fails with KeyError: 'prompt'. Put the entry back afterwards.
+    from minedojo.tasks import ALL_TASKS_SPECS
+    saved = copy.deepcopy(ALL_TASKS_SPECS.get(minedojo_task))
+    try:
+        raw = minedojo.make(task_id=minedojo_task, image_size=(256, 256), seed=seed)
+    finally:
+        if saved is not None:
+            ALL_TASKS_SPECS[minedojo_task] = saved
     logger.info(f"Created MineDojo env | task={minedojo_task} seed={seed}")
     return MineDojoWrapper(raw)
 
@@ -73,8 +82,12 @@ def _minedojo_task_ids() -> list:
 
 
 def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max_steps=3000,
-        memory=True, seed=42, output_dir="results", verbose=False):
-    """Run episodes of one task and return a summary dict. Memory carries over between episodes."""
+        memory=True, seed=42, output_dir="results", verbose=False, start_episode=0):
+    """Run episodes of one task and return a summary dict. Memory carries over between episodes.
+
+    start_episode > 0 resumes an interrupted run: it keeps the saved memory, skills and
+    finished episodes and runs the remaining ones with the same seeds.
+    """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     # Model names like "ollama/qwen2.5vl:7b" contain characters Windows filenames cannot hold
@@ -88,13 +101,23 @@ def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max
         memory_path=str(out / f"{tag}_memory.json") if memory else None,
         skills_path=str(out / f"{tag}_skills.json"),
     )
-    # Start each run with empty memory/skills so runs are comparable
-    for p in (config.memory_path, config.skills_path):
-        if p and Path(p).exists():
-            Path(p).unlink()
-
+    summary_path = out / f"{tag}_summary.json"
     results = []
-    for ep in range(num_episodes):
+    if start_episode:
+        if summary_path.exists():
+            results = [r for r in json.loads(summary_path.read_text())["episodes"]
+                       if r["episode"] < start_episode]
+        if len(results) != start_episode:
+            raise ValueError(f"Cannot resume at episode {start_episode}: {summary_path} "
+                             f"has {len(results)} finished episodes")
+    else:
+        # Start each run with empty memory/skills so runs are comparable
+        for p in (config.memory_path, config.skills_path):
+            if p and Path(p).exists():
+                Path(p).unlink()
+
+    summary = _summarize(results, env_type, task, model, memory) if results else None
+    for ep in range(start_episode, num_episodes):
         env = create_env(task, seed=seed + ep, env_type=env_type, max_steps=max_steps)
         try:
             agent = EmbodiedMindAgent(env, config)
@@ -107,9 +130,15 @@ def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max
                         f"steps={result['steps']} | {result['summary']}")
         finally:
             env.close()
+        # Rewrite the summary after every episode so a crash in a long run keeps what finished
+        summary = _summarize(results, env_type, task, model, memory)
+        summary_path.write_text(json.dumps(summary, indent=2, default=str))
+    return summary
 
+
+def _summarize(results, env_type, task, model, memory):
     n = len(results)
-    summary = {
+    return {
         "env": env_type,
         "task": task,
         "model": model,
@@ -121,8 +150,6 @@ def run(task, model="gemini-3.8-flash", env_type="minedojo", num_episodes=1, max
                               max(1, sum(r["success"] for r in results))),
         "episodes": results,
     }
-    (out / f"{tag}_summary.json").write_text(json.dumps(summary, indent=2, default=str))
-    return summary
 
 
 def main():
@@ -137,6 +164,8 @@ def main():
     parser.add_argument("--no_memory", action="store_true", help="Disable episodic memory")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output_dir", default="results")
+    parser.add_argument("--start_episode", type=int, default=0,
+                        help="Resume an interrupted run at this episode, keeping its memory")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -148,7 +177,7 @@ def main():
         parser.error("--task is required")
 
     s = run(args.task, args.model, args.env, args.num_episodes, args.max_steps,
-            not args.no_memory, args.seed, args.output_dir, args.verbose)
+            not args.no_memory, args.seed, args.output_dir, args.verbose, args.start_episode)
     print(f"\n{args.task} | env={s['env']} model={s['model']} memory={s['memory_enabled']}")
     print(f"  success rate {s['success_rate']:.0%} over {s['num_episodes']} episodes, "
           f"avg steps {s['avg_steps']:.0f}")

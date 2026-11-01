@@ -135,6 +135,8 @@ python -m embodied_mind.evaluate --task_suite harvest --model gemini-3.8-flash -
 
 Results go to `results/benchmark.md` and `results/benchmark.csv`, plus one JSON summary per task and setting.
 
+The JSON summary is rewritten after every episode. On macOS, Minecraft occasionally crashes when it relaunches for the next episode (a native `SIGSEGV` in `objc_release` under Rosetta). To continue, rerun the same command with `--start_episode N`, where N is the number of finished episodes. The run keeps its memory and finished episodes and uses the same seeds.
+
 ## Cost and time
 
 With the default settings the agent calls the VLM about every 5 steps and the planner every 10 steps, so a 3,000-step episode makes roughly 600 VLM calls and 300 planner calls, and a 500-step episode about 420 calls in all. Start with `--max_steps 500` and a few episodes to see the cost before running the full benchmark. Raise `perception_interval` and `replan_interval` in `AgentConfig` to make runs cheaper.

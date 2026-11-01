@@ -107,3 +107,16 @@ def test_ollama_planner_parses_local_model_reply(monkeypatch):
     assert plan["subgoals"] == ["find_tree", "mine_log"]
     assert sent["url"].endswith("/api/chat")
     assert sent["body"]["model"] == "qwen2.5vl:7b"
+
+
+def test_resume_keeps_finished_episodes_and_memory(tmp_path):
+    from embodied_mind.run import run
+    full = run("harvest_wood", model="rule", env_type="mock", num_episodes=3, max_steps=300,
+               seed=7, output_dir=str(tmp_path / "full"))
+    run("harvest_wood", model="rule", env_type="mock", num_episodes=2, max_steps=300,
+        seed=7, output_dir=str(tmp_path / "resumed"))
+    resumed = run("harvest_wood", model="rule", env_type="mock", num_episodes=3, max_steps=300,
+                  seed=7, output_dir=str(tmp_path / "resumed"), start_episode=2)
+    assert [e["episode"] for e in resumed["episodes"]] == [0, 1, 2]
+    assert [e["steps"] for e in resumed["episodes"]] == [e["steps"] for e in full["episodes"]]
+    assert EpisodicMemory(persist_path=str(next((tmp_path / "resumed").glob("*_memory.json")))).size == 3

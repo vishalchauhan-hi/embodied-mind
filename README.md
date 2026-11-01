@@ -12,7 +12,7 @@ Each step the agent looks at the game frame, recalls similar past episodes, asks
 
 - The full loop (perceive, recall, plan, act, reflect) runs end to end on real MineDojo, on Linux and on Apple Silicon Macs through Rosetta.
 - Unit tests and an offline smoke benchmark run in CI on Python 3.9, 3.11 and 3.12.
-- LLM-backed MineDojo evaluation is in progress; numbers will be added under [Results](#results) when they are in.
+- First MineDojo runs with a fully local 7B vision model are in under [Results](#results). The agent does not yet collect wood; larger models and longer runs are next.
 
 ## How it works
 
@@ -75,7 +75,20 @@ python -m embodied_mind.run --task harvest_wood --model ollama/qwen2.5vl:7b --nu
 
 ## Results
 
-MineDojo results are not in yet. The first `harvest_wood` runs on MineDojo (`results/`) completed 500 steps each, but most API calls failed (a retired model, then the free-tier daily limit), so the agent ran on its rule fallback and those runs say nothing about the LLM agent. A fully local run with `qwen2.5vl:7b` through Ollama (500 steps, about 55 minutes on an M1 Max) used the model on every call but did not collect a log: the 7B planner drifted to grass and dirt subgoals, and the agent's end-of-episode reflection recorded that mistake in memory. Multi-episode runs, to test whether memory corrects it, are next.
+### MineDojo, local model
+
+`harvest_wood` (MineDojo `harvest_1_log`) with `qwen2.5vl:7b` served by Ollama as both the perceiver and the planner, 500 steps per episode, seeds 42 onwards, on an M1 Max Mac under Rosetta. Memory on means each episode can recall the lessons written at the end of the earlier ones. Files are in [`results/memory_experiment/`](results/memory_experiment/).
+
+| Setting | Episodes | Logs collected | Success |
+|---|---|---|---|
+| Memory off | 3 | 0 | 0 / 3 |
+| Memory on | 2 | 0 | 0 / 2 |
+
+The 7B model does not solve the task yet, with or without memory. Its plans name the right goal (go to the trees, harvest wood), but the agent spends its steps on grass, cacti, or crafting before it has any wood. Memory does what it is meant to do mechanically: the episode 1 reflection ("the failures occurred when attempting to harvest grass and cacti") was recalled in episode 2, whose first actions moved forward instead of crafting. Two episodes are far too few to say whether that helps. The runs were stopped early because each episode takes 1 to 2 hours on this machine.
+
+Earlier runs with Gemini (`results/`, 500 steps each) say nothing about the LLM agent, because most API calls failed (a retired model, then the free-tier daily limit) and the agent ran on its rule fallback.
+
+### Offline mock environment
 
 The table below is from the offline mock environment, with the rule planner and 20 episodes per row. It shows that the loop runs end to end. It is not a MineDojo result and should not be read as one.
 
