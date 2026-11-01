@@ -80,3 +80,30 @@ def test_find_in_perception_aliases():
 def test_unknown_mock_task():
     with pytest.raises(ValueError):
         MockMinecraftEnv(task="fly_to_moon")
+
+
+def test_ollama_planner_parses_local_model_reply(monkeypatch):
+    import json
+    import requests
+
+    sent = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            plan = {"reasoning": "trees are visible", "subgoals": ["find_tree", "mine_log"],
+                    "estimated_difficulty": "easy", "key_risks": []}
+            return {"message": {"content": json.dumps(plan)}}
+
+    def fake_post(url, json=None, timeout=None):
+        sent["url"], sent["body"] = url, json
+        return FakeResponse()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    planner = HierarchicalPlanner(model="ollama/qwen2.5vl:7b")
+    plan = planner.plan("harvest_wood", inventory={})
+    assert plan["subgoals"] == ["find_tree", "mine_log"]
+    assert sent["url"].endswith("/api/chat")
+    assert sent["body"]["model"] == "qwen2.5vl:7b"

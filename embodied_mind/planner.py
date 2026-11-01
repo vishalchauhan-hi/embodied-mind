@@ -71,6 +71,11 @@ class HierarchicalPlanner:
             from openai import OpenAI
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             self.api = "openai"
+        elif "llava" in self.model or "ollama" in self.model:
+            import requests
+            self.client = requests  # Use requests for Ollama API
+            self.api = "ollama"
+            self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         else:
             raise ValueError(f"Unsupported model for planner: {self.model}")
 
@@ -202,6 +207,18 @@ class HierarchicalPlanner:
                 max_tokens=800,
             )
             return response.choices[0].message.content
+        elif self.api == "ollama":
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+            response = self.client.post(
+                f"{self.ollama_url}/api/chat",
+                json={"model": self.model.replace("ollama/", ""), "messages": messages, "stream": False},
+                timeout=300,
+            )
+            response.raise_for_status()
+            return response.json()["message"]["content"]
         raise RuntimeError(f"No LLM backend for api={self.api}")
 
     def _parse_plan(self, text: str) -> dict:

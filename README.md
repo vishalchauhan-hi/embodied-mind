@@ -64,11 +64,18 @@ python -m embodied_mind.run --task harvest_wool --model gemini-3.8-flash --num_e
 python -m embodied_mind.evaluate --task_suite harvest --model gemini-3.8-flash --num_episodes 5
 ```
 
+Fully local run, no API key (a vision model served by [Ollama](https://ollama.com), for example on an Apple Silicon Mac):
+
+```bash
+ollama pull qwen2.5vl:7b
+python -m embodied_mind.run --task harvest_wood --model ollama/qwen2.5vl:7b --num_episodes 1 --max_steps 500
+```
+
 `evaluate` runs every task with memory off and on and writes `results/benchmark.csv` and `results/benchmark.md`.
 
 ## Results
 
-MineDojo results are not in yet. The first `harvest_wood` runs on MineDojo (`results/`) completed 500 steps each, but most API calls failed (a retired model, then the free-tier daily limit), so the agent ran on its rule fallback and those runs say nothing about the LLM agent.
+MineDojo results are not in yet. The first `harvest_wood` runs on MineDojo (`results/`) completed 500 steps each, but most API calls failed (a retired model, then the free-tier daily limit), so the agent ran on its rule fallback and those runs say nothing about the LLM agent. A fully local run with `qwen2.5vl:7b` through Ollama (500 steps, about 55 minutes on an M1 Max) used the model on every call but did not collect a log: the 7B planner drifted to grass and dirt subgoals, and the agent's end-of-episode reflection recorded that mistake in memory. Multi-episode runs, to test whether memory corrects it, are next.
 
 The table below is from the offline mock environment, with the rule planner and 20 episodes per row. It shows that the loop runs end to end. It is not a MineDojo result and should not be read as one.
 

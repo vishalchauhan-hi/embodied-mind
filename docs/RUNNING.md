@@ -96,6 +96,13 @@ cp .env.example .env
 set -a; source .env; set +a
 ```
 
+To run without an API key, serve a local vision model with [Ollama](https://ollama.com) and pass `--model ollama/<name>`. Both the perceiver and the planner use it.
+
+```bash
+ollama serve &                 # or the Ollama app
+ollama pull qwen2.5vl:7b       # 6 GB; qwen2.5vl:32b plans better but is slower
+```
+
 ## 5. Check task ids
 
 MineDojo task ids differ between versions. List them and make sure the ones in `TASK_MAP` in `embodied_mind/run.py` exist:

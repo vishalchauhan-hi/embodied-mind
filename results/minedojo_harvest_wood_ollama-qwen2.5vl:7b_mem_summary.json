@@ -1,0 +1,22 @@
+{
+  "env": "minedojo",
+  "task": "harvest_wood",
+  "model": "ollama/qwen2.5vl:7b",
+  "memory_enabled": true,
+  "num_episodes": 1,
+  "success_rate": 0.0,
+  "avg_steps": 500.0,
+  "avg_steps_success": 0.0,
+  "episodes": [
+    {
+      "task": "harvest_wood",
+      "steps": 500,
+      "total_reward": 0.0,
+      "success": false,
+      "final_inventory": {},
+      "summary": "The agent successfully navigated through 500 steps and took 500 actions, but failed to harvest wood, resulting in a reward of 0.00. The primary failures were in attempting to harvest dirt blocks and grass, which are not the target resources for the task. The agent should focus on identifying and harvesting the correct resources, specifically wood, and avoid attempting to harvest non-target blocks like dirt and grass.",
+      "episode": 0,
+      "elapsed_seconds": 3218.02
+    }
+  ]
+}
