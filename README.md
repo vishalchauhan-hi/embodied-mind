@@ -28,7 +28,7 @@ action executor -> steer toward the target, mine, attack or craft
 MineDojo adapter -> MineDojo's 8-part action format
 ```
 
-- `perceiver.py` sends the frame to a VLM (Gemini, OpenAI or a local LLaVA through Ollama) and asks for JSON describing what is in view.
+- `perceiver.py` sends the frame to a VLM (Gemini, OpenAI, or a local model such as `qwen2.5vl` through Ollama) and asks for JSON describing what is in view.
 - `planner.py` asks an LLM for subgoals given the goal, the scene, the inventory, recent failures and recalled memories. A rule-based planner covers offline runs and API failures.
 - `action_executor.py` turns a subgoal into an action. It steers toward targets using the direction and distance the VLM reported, and looks again after each turn.
 - `memory.py` stores one entry per episode and recalls the closest ones by embedding similarity. It uses OpenAI embeddings when a key is set and an offline word-hashing embedding otherwise.

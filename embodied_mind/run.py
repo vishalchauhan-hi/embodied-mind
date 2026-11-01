@@ -158,7 +158,7 @@ def main():
     parser.add_argument("--list_tasks", action="store_true", help="Print MineDojo task ids and exit")
     parser.add_argument("--env", choices=["minedojo", "mock"], default="minedojo")
     parser.add_argument("--model", default="gemini-3.8-flash",
-                        help="gemini-*, gpt-*, ollama/llava, or 'rule' for offline runs")
+                        help="gemini-*, gpt-*, ollama/<model> (e.g. ollama/qwen2.5vl:7b), or 'rule' for offline runs")
     parser.add_argument("--max_steps", type=int, default=3000)
     parser.add_argument("--num_episodes", type=int, default=1)
     parser.add_argument("--no_memory", action="store_true", help="Disable episodic memory")

@@ -1,6 +1,6 @@
 """
 VLM-based visual perceiver for grounding raw game frames into structured scene descriptions.
-Supports Google Gemini, OpenAI GPT-4o, and local models (LLaVA via Ollama).
+Supports Google Gemini, OpenAI GPT-4o, and local vision models via Ollama (e.g. qwen2.5vl).
 """
 
 import os
